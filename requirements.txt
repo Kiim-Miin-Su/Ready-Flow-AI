@@ -1,0 +1,6 @@
+# Vercel serverless runtime deps (api/index.py) — pandas-free to fit the 250MB bundle.
+# scikit-learn pinned to the version the model.pkl was trained with (unpickle compatibility).
+fastapi==0.115.6
+scikit-learn==1.9.0
+numpy==2.5.0
+scipy==1.18.0

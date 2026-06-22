@@ -1,0 +1,271 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Seoul Flood Risk API",
+    "description": "서울 법정동 단위 침수 확률 예측 API.\n\n- 입력: 유저 주소(→법정동) + 실시간 예보 일강우 시퀀스\n- 출력: 침수 확률 `flood_probability` ∈ [0,1]\n- 커버리지: 침수 이력이 있는 95개 법정동 (그 외 404)\n\nFlutter 연동 가이드는 FRONTEND.md 참고.",
+    "contact": {
+      "name": "doubled_seven"
+    },
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "헬스체크",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/predict": {
+      "post": {
+        "tags": [
+          "predict"
+        ],
+        "summary": "침수 확률 예측",
+        "description": "주소(또는 adm_cd) + 예보 일강우 → 해당 법정동의 침수 확률.",
+        "operationId": "predict_api_predict_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PredictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "동 미해결/커버리지 밖",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "페이로드 검증 실패"
+          }
+        }
+      }
+    },
+    "/api/dongs": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "summary": "커버리지 동 목록",
+        "description": "예측 가능한 95개 법정동 (adm_cd, 구, 동) 목록 — 클라이언트 자동완성/선택 UI용",
+        "operationId": "dongs_api_dongs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "examples": [
+              "ok"
+            ]
+          },
+          "dongs": {
+            "type": "integer",
+            "title": "Dongs",
+            "description": "커버리지 동 수",
+            "examples": [
+              95
+            ]
+          },
+          "features": {
+            "type": "integer",
+            "title": "Features",
+            "examples": [
+              16
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "dongs",
+          "features"
+        ],
+        "title": "HealthResponse"
+      },
+      "PredictRequest": {
+        "properties": {
+          "address": {
+            "type": "string",
+            "title": "Address",
+            "description": "유저 주소. 지오코딩→법정동. adm_cd를 직접 주면 비워도 됨.",
+            "default": "",
+            "examples": [
+              "서울 노원구 중계동 23-28"
+            ]
+          },
+          "forecast_daily_rain": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 30,
+            "minItems": 1,
+            "title": "Forecast Daily Rain",
+            "description": "일강우(mm) 시퀀스. 과거→오늘 순서(오늘이 마지막). 최대 30개.",
+            "examples": [
+              [
+                5,
+                40,
+                60,
+                100
+              ]
+            ]
+          },
+          "adm_cd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adm Cd",
+            "description": "10자리 법정동코드. 주면 지오코딩을 건너뜀.",
+            "examples": [
+              1135010600
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "forecast_daily_rain"
+        ],
+        "title": "PredictRequest",
+        "examples": [
+          {
+            "address": "서울 노원구 중계동 23-28",
+            "forecast_daily_rain": [
+              5,
+              40,
+              60,
+              100
+            ]
+          },
+          {
+            "address": "",
+            "adm_cd": 1135010600,
+            "forecast_daily_rain": [
+              10,
+              30,
+              80
+            ]
+          }
+        ]
+      },
+      "PredictResponse": {
+        "properties": {
+          "adm_cd": {
+            "type": "integer",
+            "title": "Adm Cd",
+            "description": "법정동코드",
+            "examples": [
+              1135010600
+            ]
+          },
+          "gu": {
+            "type": "string",
+            "title": "Gu",
+            "examples": [
+              "노원구"
+            ]
+          },
+          "dong": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dong",
+            "description": "동 라벨(없을 수 있음)",
+            "examples": [
+              "중계동"
+            ]
+          },
+          "flood_probability": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Flood Probability",
+            "description": "침수 확률 [0,1]",
+            "examples": [
+              0.7473
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "adm_cd",
+          "gu",
+          "flood_probability"
+        ],
+        "title": "PredictResponse"
+      }
+    }
+  }
+}

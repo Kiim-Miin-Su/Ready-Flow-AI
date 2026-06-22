@@ -1,0 +1,29 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install serving deps
+        run: pip install -r requirements.txt
+      - name: Import + health check
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from api.index import app
+          c = TestClient(app)
+          assert c.get("/api/health").json()["status"] == "ok"
+          r = c.post("/api/predict", json={
+              "address": "서울 노원구 중계동 23-28",
+              "forecast_daily_rain": [5, 40, 60, 100]})
+          assert "flood_probability" in r.json(), r.text
+          print("smoke OK:", r.json())
+          PY
