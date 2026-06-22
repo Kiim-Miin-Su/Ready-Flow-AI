@@ -131,7 +131,24 @@ def recall_at_k(y, p, k):
     return float(y[idx].sum() / max(y.sum(), 1))
 
 
-def export_numpy_model(base, iso, path):
+# relative-risk tier percentiles (see DIAGNOSIS §7-④ / flood_model.risk_level):
+# calibrated prob is low-magnitude even on flood days, so we expose a RELATIVE tier
+# based on where a prediction lands in the TRAIN prediction distribution.
+WARNING_PCT, DANGER_PCT = 85, 99  # top-15% -> warning(주의), top-1% -> danger(경고)
+
+
+def risk_block(train_probs):
+    """101-point percentile grid + warning/danger cut values from train predictions."""
+    tp = np.asarray(train_probs, dtype=float)
+    return {
+        "ref_quantiles": [float(np.quantile(tp, q / 100.0)) for q in range(101)],
+        "warning_pct": WARNING_PCT, "danger_pct": DANGER_PCT,
+        "warning": float(np.quantile(tp, WARNING_PCT / 100.0)),
+        "danger": float(np.quantile(tp, DANGER_PCT / 100.0)),
+    }
+
+
+def export_numpy_model(base, iso, path, risk=None):
     """Flatten the fitted single base pipeline + isotonic into a plain-array JSON so
     serving needs only numpy (no sklearn/scipy). See flood_model.py."""
     pre = base.named_steps["pre"]
@@ -163,6 +180,8 @@ def export_numpy_model(base, iso, path):
         "iso_x": iso.X_thresholds_.astype(float).tolist(),
         "iso_y": iso.y_thresholds_.astype(float).tolist(),
     }
+    if risk is not None:
+        model["risk"] = risk
     with open(path, "w", encoding="utf-8") as f:
         json.dump(model, f)
 
@@ -276,7 +295,9 @@ def main():
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
 
     # ---- export serving artifacts -------------------------------------------
-    export_numpy_model(base, iso, os.path.join(OUT, "model_np.json"))
+    # relative-risk cuts from the TRAIN prediction distribution (deployed numpy path)
+    risk = risk_block(deployed_proba(Xtr))
+    export_numpy_model(base, iso, os.path.join(OUT, "model_np.json"), risk=risk)
     # bit-exactness check vs the numpy runtime
     sys.path.insert(0, os.path.join(ROOT, "api"))
     import flood_model as fm

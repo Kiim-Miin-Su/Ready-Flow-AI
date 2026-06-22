@@ -80,12 +80,23 @@ class PredictRequest(BaseModel):
     ]}}
 
 
+RiskLevel = Literal["info", "warning", "danger"]
+
+
 class PredictResponse(BaseModel):
     adm_cd: int = Field(..., examples=[1135010600], description="법정동코드")
     gu: str = Field(..., examples=["노원구"])
     dong: str | None = Field(None, examples=["중계동"], description="동 라벨(없을 수 있음)")
     flood_probability: float = Field(..., ge=0, le=1, examples=[0.7473],
-                                     description="침수 확률 [0,1]")
+                                     description="침수 확률 [0,1] (isotonic 보정값)")
+    risk_level: RiskLevel | None = Field(
+        None, examples=["warning"],
+        description=("상대 위험등급: info(관심)·warning(주의)·danger(경고). "
+                     "보정확률은 폭우일에도 낮으므로(현실 반영) 절대%가 아닌 "
+                     "학습분포 백분위 기준 등급을 함께 제공. cut: warning=상위15%, danger=상위1%."))
+    risk_percentile: int | None = Field(
+        None, ge=0, le=100, examples=[88],
+        description="이 예측이 학습 예측분포에서 차지하는 백분위(0-100). 높을수록 상대적 고위험.")
 
 
 class HealthResponse(BaseModel):
@@ -143,7 +154,9 @@ def predict(req: PredictRequest):
     feat.update({k: info[k] for k in HIST_KEYS})
     prob = fm.predict_proba(MODEL, feat)
     return {"adm_cd": int(adm), "gu": info["gu"], "dong": info.get("dong_label"),
-            "flood_probability": round(prob, 4)}
+            "flood_probability": round(prob, 4),
+            "risk_level": fm.risk_level(MODEL, prob),
+            "risk_percentile": fm.risk_percentile(MODEL, prob)}
 
 
 @app.get("/api/dongs", tags=["meta"], summary="커버리지 동 목록",

@@ -128,8 +128,10 @@ isotonic 보정은 출력을 **관측된 침수 빈도**에 맞춘다. 폭우일
 ### 🥉 ③ inert 이력 피처 정리/대체 (근거: §3)
 - `prev_year_same_week_cnt`, `prev_year_same_month_cnt`, `hist_flood_cnt_prior`, `days_since_last_flood`는 무신호 → 제거하거나(노이즈 감소) 정보성 피처(선행강수지수 API, 토양수분)로 교체. **주의:** FEATURES 변경 시 `api/flood_model.py`·`api/index.py`·`serve_tables`·monotonic 벡터 동기화 필요(§HANDOFF 참조).
 
-### ④ 확률 → 위험등급 표현 (근거: §5)
-- 모델/보정은 유지. 학습분포 분위수로 `risk_level`(예: <p80=낮음, p80~p97=주의, >p97=경보)을 **추가 필드**로 응답에 더함(프론트 계약 비파괴). 사용자 체감 개선 + 통계적으로 정직.
+### ④ 확률 → 위험등급 표현 (근거: §5) — ✅ **구현됨**
+- 모델/보정은 그대로 두고, 학습분포 분위수로 `risk_level`(info/warning/danger)+`risk_percentile`(0-100)을 **추가 응답 필드**로 제공(프론트 계약 비파괴). 컷: warning=train q85, danger=train q99 (`train.py:WARNING_PCT/DANGER_PCT`로 조정). `model_np.json["risk"]`에 저장, 재학습 없이 주입 가능(`tools/`).
+- 검증: 실제 2024 침수일 61건 중 **info 탈출 57%**(이전 8%), danger 14건(정밀도 ~30%, base-rate 1.1% 대비 27배). 2022-08-08형 신림동 폭우 → warning(상위 2%).
+- 프론트(home_protector)는 `risk_level` 우선 사용, 없으면 기존 % 임계로 폴백.
 
 ### ⑤ 극단·과거 이벤트 데이터 보강 (근거: §6)
 - 2020~2022 침수흔적도(특히 **2022-08-08**) + 당시 강우 추가 → 극단 구간 실표본 확보가 합성증강보다 우선. 합성증강은 물리근거(단조)로 OFF-by-default 플래그(`--augment`)로만, 합성여부 라벨 필수.

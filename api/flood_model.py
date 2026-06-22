@@ -62,3 +62,30 @@ def predict_proba(m, feat):
     raw = _raw(m, _featurize(m, feat))
     p = 1.0 / (1.0 + np.exp(-raw))             # sigmoid -> uncalibrated proba
     return float(np.interp(p, m["iso_x"], m["iso_y"]))   # isotonic calibration
+
+
+# --- relative risk tiers ------------------------------------------------------
+# The calibrated probability is a correct but low-magnitude per-dong-day flood
+# frequency (heavy-rain days still flood only ~13% of the time), so absolute %
+# thresholds are misleading. We instead report a RELATIVE tier: where this
+# prediction falls in the training-prediction distribution (see DIAGNOSIS §7-④).
+# Cuts (`risk.warning`/`risk.danger`) and the percentile grid are stored in
+# model_np.json by train.py. Absent (old artifact) -> returns None; callers fall back.
+def risk_percentile(m, prob):
+    """Percentile rank 0-100 of `prob` within the training prediction distribution."""
+    g = m.get("risk", {}).get("ref_quantiles")
+    if not g:
+        return None
+    return int(np.clip(np.searchsorted(np.asarray(g, dtype=float), prob, side="right"), 0, 100))
+
+
+def risk_level(m, prob):
+    """Relative risk tier 'danger' / 'warning' / 'info' from stored percentile cuts."""
+    r = m.get("risk")
+    if not r:
+        return None
+    if prob >= r["danger"]:
+        return "danger"
+    if prob >= r["warning"]:
+        return "warning"
+    return "info"

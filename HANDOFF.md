@@ -10,7 +10,8 @@
 - **배포됨.** commit `6d18570` push 완료 → Vercel 자동 배포, `GET /api/health` 200 OK 확인.
 - 모델에 **monotonic 강우 제약** 적용 + 재학습 완료. 비단조/사강 결함 해결, 메트릭 개선.
 - 근본원인 진단 + 개선 로드맵 문서화 완료 → [DIAGNOSIS.md](DIAGNOSIS.md).
-- **미배포 로컬 커밋이 있을 수 있음**(이 문서/도구/진단). push 전 리뷰 권장.
+- **상대 위험등급 `risk_level`/`risk_percentile` API 추가**(DIAGNOSIS §7-④, 비파괴). 보정확률이 폭우일에도 낮아 절대%가 오해를 주는 문제를, 학습분포 백분위 기반 등급으로 해결. 프론트(home_protector)도 이 등급을 우선 사용하도록 수정(폴백 포함). ⚠️ 프론트는 `flutter analyze`로 확인 필요(샌드박스에 dart 없음).
+- **미배포 로컬 커밋이 있을 수 있음**(문서/도구/진단/risk_level). push 전 리뷰 권장.
 
 ## 2. 이번 세션에서 한 일
 

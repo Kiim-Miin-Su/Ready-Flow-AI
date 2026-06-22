@@ -275,9 +275,46 @@
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Flood Probability",
-            "description": "침수 확률 [0,1]",
+            "description": "침수 확률 [0,1] (isotonic 보정값)",
             "examples": [
               0.7473
+            ]
+          },
+          "risk_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "warning",
+                  "danger"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Level",
+            "description": "상대 위험등급: info(관심)·warning(주의)·danger(경고). 보정확률은 폭우일에도 낮으므로(현실 반영) 절대%가 아닌 학습분포 백분위 기준 등급을 함께 제공. cut: warning=상위15%, danger=상위1%.",
+            "examples": [
+              "warning"
+            ]
+          },
+          "risk_percentile": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Percentile",
+            "description": "이 예측이 학습 예측분포에서 차지하는 백분위(0-100). 높을수록 상대적 고위험.",
+            "examples": [
+              88
             ]
           }
         },
