@@ -11,10 +11,17 @@ Deps (requirements.txt): fastapi, numpy  ONLY  (NO scikit-learn / scipy / pandas
 import os
 import sys
 import json
+from typing import Literal, Optional
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Accepted building-type values (optional input). Coarse buckets derived from the
+# flood-trace TYPE field. NOTE: the current model does NOT consume this — it is a
+# reserved/forward-compatible field so the client can collect it now and a future
+# model version can use it without a breaking payload change. See DATA.md §6.
+BuildingType = Literal["residential", "commercial", "industrial", "underground", "road", "etc"]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -60,6 +67,12 @@ class PredictRequest(BaseModel):
     adm_cd: int | None = Field(
         None, description="10자리 법정동코드. 주면 지오코딩을 건너뜀.",
         examples=[1135010600])
+    building_type: Optional[BuildingType] = Field(
+        None, description=(
+            "(선택) 건물 유형. 허용값: residential(주거)·commercial(상가/시설)·"
+            "industrial(공장)·underground(지하/반지하)·road(도로)·etc(기타). "
+            "현재 모델은 사용하지 않으며 안 보내도 됨 — 향후 확장용 예약 필드."),
+        examples=["residential"])
 
     model_config = {"json_schema_extra": {"examples": [
         {"address": "서울 노원구 중계동 23-28", "forecast_daily_rain": [5, 40, 60, 100]},

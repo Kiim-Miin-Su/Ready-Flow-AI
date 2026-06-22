@@ -187,6 +187,29 @@
             "examples": [
               1135010600
             ]
+          },
+          "building_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "residential",
+                  "commercial",
+                  "industrial",
+                  "underground",
+                  "road",
+                  "etc"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Building Type",
+            "description": "(선택) 건물 유형. 허용값: residential(주거)·commercial(상가/시설)·industrial(공장)·underground(지하/반지하)·road(도로)·etc(기타). 현재 모델은 사용하지 않으며 안 보내도 됨 — 향후 확장용 예약 필드.",
+            "examples": [
+              "residential"
+            ]
           }
         },
         "type": "object",
