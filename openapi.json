@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Seoul Flood Risk API",
-    "description": "서울 법정동 단위 침수 확률 예측 API.\n\n- 입력: 유저 주소(→법정동) + 실시간 예보 일강우 시퀀스\n- 출력: 침수 확률 `flood_probability` ∈ [0,1]\n- 커버리지: 침수 이력이 있는 95개 법정동 (그 외 404)\n\nFlutter 연동 가이드는 FRONTEND.md 참고.",
+    "description": "서울 법정동 단위 침수 확률 예측 API.\n\n- 입력: 유저 주소(→법정동) + 실시간 예보 일강우 시퀀스\n- 출력: 침수 확률 `flood_probability` ∈ [0,1]\n- 커버리지: 침수 이력이 있는 93개 법정동 (그 외 404)\n\nFlutter 연동 가이드는 FRONTEND.md 참고.",
     "contact": {
       "name": "doubled_seven"
     },
@@ -81,7 +81,7 @@
           "meta"
         ],
         "summary": "커버리지 동 목록",
-        "description": "예측 가능한 95개 법정동 (adm_cd, 구, 동) 목록 — 클라이언트 자동완성/선택 UI용",
+        "description": "예측 가능한 93개 법정동 (adm_cd, 구, 동) 목록 — 클라이언트 자동완성/선택 UI용",
         "operationId": "dongs_api_dongs_get",
         "responses": {
           "200": {
@@ -125,7 +125,7 @@
             "title": "Dongs",
             "description": "커버리지 동 수",
             "examples": [
-              95
+              93
             ]
           },
           "features": {

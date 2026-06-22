@@ -46,7 +46,7 @@ app = FastAPI(
         "서울 법정동 단위 침수 확률 예측 API.\n\n"
         "- 입력: 유저 주소(→법정동) + 실시간 예보 일강우 시퀀스\n"
         "- 출력: 침수 확률 `flood_probability` ∈ [0,1]\n"
-        "- 커버리지: 침수 이력이 있는 95개 법정동 (그 외 404)\n\n"
+        "- 커버리지: 침수 이력이 있는 93개 법정동 (그 외 404)\n\n"
         "Flutter 연동 가이드는 FRONTEND.md 참고."),
     contact={"name": "doubled_seven"},
 )
@@ -90,7 +90,7 @@ class PredictResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = Field(..., examples=["ok"])
-    dongs: int = Field(..., examples=[95], description="커버리지 동 수")
+    dongs: int = Field(..., examples=[93], description="커버리지 동 수")
     features: int = Field(..., examples=[16])
 
 
@@ -137,7 +137,7 @@ def predict(req: PredictRequest):
     """주소(또는 adm_cd) + 예보 일강우 → 해당 법정동의 침수 확률."""
     adm = str(req.adm_cd) if req.adm_cd is not None else geocode_to_admcd(req.address)
     if adm not in TABLES:
-        raise HTTPException(404, f"adm_cd {adm} not in coverage (95 flood-prone dongs)")
+        raise HTTPException(404, f"adm_cd {adm} not in coverage (93 flood-prone dongs)")
     info = TABLES[adm]
     feat = rain_windows(req.forecast_daily_rain)
     feat.update({k: info[k] for k in HIST_KEYS})
@@ -147,7 +147,7 @@ def predict(req: PredictRequest):
 
 
 @app.get("/api/dongs", tags=["meta"], summary="커버리지 동 목록",
-         description="예측 가능한 95개 법정동 (adm_cd, 구, 동) 목록 — 클라이언트 자동완성/선택 UI용")
+         description="예측 가능한 93개 법정동 (adm_cd, 구, 동) 목록 — 클라이언트 자동완성/선택 UI용")
 def dongs():
     return [{"adm_cd": int(k), "gu": v["gu"], "dong": v.get("dong_label")}
             for k, v in sorted(TABLES.items())]
