@@ -1,10 +1,26 @@
-# 서울 침수 위험 예측 API
+# 서울 침수 위험 예측 (doubled_seven)
 
-유저 **주소** + **실시간 예보 강우**를 입력받아 해당 법정동의 **침수 확률**을 반환하는 FastAPI 서비스.
+유저 **주소 → 법정동** + **실시간 예보 강우** 를 입력받아 해당 동의 **침수 확률**을 반환하는 ML 서비스.
+서울 침수흔적도(2023–2024) + 강우 관측소 데이터를 (법정동×날짜) 분류 문제로 전처리·학습하고, FastAPI로 서빙해 Vercel에 배포합니다.
 
-- 전처리/데이터 설계 → [`DATA.md`](DATA.md)
-- 모델/학습/평가 → [`MODEL.md`](MODEL.md)
-- 배포(Vercel) → [`INFRA.md`](INFRA.md)
+```
+data/ ──(build_dataset.py)──▶ build/ 피처 패널 ──(train.py)──▶ build/model_np.json
+                                                                      │
+                              Flutter 앱 ──HTTP──▶ FastAPI(api/) ◀─────┘  (numpy 추론)
+```
+
+---
+
+## 📚 문서 (주제별)
+
+| 문서 | 주제 | 독자 |
+|---|---|---|
+| **README.md** (이 문서) | 프로젝트 개요·빠른 시작·구조 | 전체 |
+| [`DATA.md`](DATA.md) | 데이터 원천·전처리·피처 엔지니어링·근거·한계 | 데이터/ML |
+| [`MODEL.md`](MODEL.md) | 모델 선택·학습·보정·내보내기·성능·예측계약 | ML |
+| [`INFRA.md`](INFRA.md) | Vercel 배포·GitHub 연동·CI·번들 용량 해법 | 인프라/배포 |
+| [`FRONTEND.md`](FRONTEND.md) | **API 계약·payload·SDK 연동·Flutter 예제** | 프론트(Flutter) |
+| [`openapi.json`](openapi.json) | 기계 판독 OpenAPI(Swagger) 스펙 | 프론트/툴링 |
 
 ---
 
@@ -12,85 +28,51 @@
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt        # 학습/전처리 포함
+pip install -r requirements-dev.txt        # 학습/전처리 (서빙은 requirements.txt만)
 
 python build_dataset.py        # data/ -> build/ 피처 패널 생성
-python train.py --trials 40    # 모델 학습 -> build/model.pkl, serve_tables.json
+python train.py --trials 40    # 학습 -> build/model_np.json, serve_tables.json
 
-uvicorn api.index:app --reload # http://127.0.0.1:8000
+uvicorn api.index:app --reload # http://127.0.0.1:8000  (Swagger: /docs)
 ```
 
----
-
-## 엔드포인트
-
-### `GET /api/health`
-헬스체크. 로드된 동 수·피처 수 반환.
-```json
-{ "status": "ok", "dongs": 93, "features": 16 }
-```
-
-### `POST /api/predict`
-침수 확률 예측.
-
-**Request body** (`application/json`)
-
-| 필드 | 타입 | 필수 | 설명 |
-|---|---|---|---|
-| `address` | string | ✅* | 유저 주소. 지오코딩→법정동. (*`adm_cd` 직접 제공 시 생략 가능) |
-| `forecast_daily_rain` | number[] | ✅ | 일강우(mm) 시퀀스, **과거→오늘**(오늘이 마지막). 최대 30개. 누적/선행 강우 윈도우 계산용 |
-| `adm_cd` | int | ❌ | 10자리 법정동코드 직접 지정(지오코딩 건너뜀) |
-
+빠른 호출 확인:
 ```bash
 curl -X POST http://127.0.0.1:8000/api/predict \
   -H 'Content-Type: application/json' \
-  -d '{"address":"서울 노원구 중계동 23-28","forecast_daily_rain":[5,40,60,100]}'
+  -d '{"adm_cd":1135010600,"forecast_daily_rain":[5,40,60,100]}'
+# -> { "adm_cd":1135010600, "gu":"노원구", "dong":"중계동", "flood_probability":0.0765 }
 ```
-
-**Response 200**
-```json
-{ "adm_cd": 1135010600, "gu": "노원구", "dong": "중계동", "flood_probability": 0.34 }
-```
-
-**오류**
-| 코드 | 의미 |
-|---|---|
-| `404 dong not resolved` | 주소에서 법정동을 못 찾음(지오코더 미연동/범위 밖) |
-| `404 adm_cd not in coverage` | 학습 커버리지(침수 이력 93개 동) 밖 |
-| `422` | 페이로드 검증 실패(pydantic) |
+> 엔드포인트·payload·SDK 연동 전체 스펙은 **[`FRONTEND.md`](FRONTEND.md)**.
 
 ---
 
-## 입력 → 피처 변환 (서버 내부)
+## 핵심 설계 요약
 
-| 단계 | 처리 | 출력 |
-|---|---|---|
-| 1. 주소 | 지오코딩 | `adm_cd`(법정동) |
-| 2. 동 조회 | `serve_tables.json` | 이력/이웃/구코드 정적 피처 |
-| 3. 예보 | 누적합 | `rain_1d/3d/7d/14d/30d`, `rain_ante7`, 강도 프록시 |
-| 4. 조립 | 학습 피처 순서로 정렬 | `model.predict_proba` → 확률 |
-
-> `serve_tables.json` = 동별 **최신 이력 스냅샷**(학습 시 내보냄). 이력 피처는 추론 시 재계산하지 않고 조회.
-
----
-
-## ⚠️ 운영 전 반드시 연동/확인할 것
-
-1. **지오코더**: `api/index.py`의 `geocode_to_admcd()`는 **스텁**(동 라벨 부분일치)임. 운영 시 **VWorld/Kakao 주소→법정동코드 API**로 교체.
-2. **강우 강도**: 예보가 일강우만 줄 경우 `rain_max10/60`은 근사치(=일강우/6, /2). 기상청 단기예보·초단기실황의 시간당 강우가 있으면 교체하면 정확도↑.
-3. **커버리지**: 침수 이력이 있는 **93개 법정동**만 예측. 그 외 동은 404 → 향후 전체 법정동 마스터·지형 피처로 확장(`DATA.md §7`).
-4. **모델 버전**: `model.pkl`은 `scikit-learn==1.9.0`으로 피클됨. 서버 `requirements.txt`와 버전 일치 필수.
-5. **확률 보정**: isotonic 보정 적용했으나 양성 희소(2년치)로 절대확률은 보수적. 의사결정 임계값은 운영 데이터로 재튜닝 권장.
+- **분석 단위 = (법정동 × 날짜)**. 침수흔적도는 양성-only라 (동,날짜) 격자로 음성을 생성해 분류 성립. (`DATA.md`)
+- **강우 조인 = 구 단위**(25개 구 모두 구청 관측소 보유), **동 식별 = `ADM_CD`**. 동별 자체 우량계는 불가능(48관측소<424동). (`DATA.md`)
+- **모델 = HistGradientBoosting**(불균형 1.1%, 16피처). GNN은 소규모·프록시그래프라 비권장. (`MODEL.md`)
+- **서빙 = 순수 numpy**: 학습모델을 평문 JSON으로 내보내 sklearn/scipy 없이 평가 → **Vercel 250MB 한도 회피**. (`INFRA.md`)
+- 성능(held-out 2024): **ROC-AUC 0.88**, 강우-only 베이스라인(0.72) 대비 큰 향상. (`MODEL.md`)
 
 ---
 
 ## 파일 구조
 ```
-build_dataset.py     전처리: data/ -> build/ 피처 패널
-train.py             학습: Optuna + 보정 -> build/model.pkl, serve_tables.json
-api/index.py         FastAPI 서빙 (Vercel entrypoint, pandas-free)
-vercel.json          Vercel 함수/라우팅 설정
-requirements.txt     서빙 의존성(경량)   /  requirements-dev.txt 학습 의존성
-build/               산출물(model.pkl, serve_tables.json 등)
-DATA.md MODEL.md INFRA.md
+build_dataset.py     전처리: data/ -> build/ 피처 패널 (+ DATA.md)
+train.py             학습: Optuna + 보정 + numpy 내보내기 (+ MODEL.md)
+api/index.py         FastAPI 서빙 (Vercel entrypoint)
+api/flood_model.py   순수 numpy 추론기 (sklearn 불필요)
+vercel.json          Vercel 함수/라우팅 설정 (+ INFRA.md)
+requirements.txt     서빙 = fastapi+numpy   /  requirements-dev.txt = 학습
+build/               산출물: model_np.json, serve_tables.json, metrics.json …
+openapi.json         OpenAPI(Swagger) 스펙
 ```
+
+---
+
+## ⚠️ 운영 전 체크 (요약 — 상세는 각 문서)
+1. **지오코더**: `api/index.py`의 `geocode_to_admcd()`는 스텁 → 운영 시 VWorld/Kakao 연동(또는 클라이언트가 `adm_cd` 직접 전송). (`FRONTEND.md §2`)
+2. **예보 강우**: 클라이언트가 SDK의 시간별 강우를 일강우 배열로 정규화해 전송. (`FRONTEND.md §2`)
+3. **커버리지**: 침수 이력 93개 법정동만 예측(그 외 404). (`DATA.md §7`)
+4. **확률 해석**: base-rate 보정된 보수적 값 → 임계값/상대위험으로 사용. (`FRONTEND.md §6`)

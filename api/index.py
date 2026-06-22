@@ -5,22 +5,25 @@ Input : 유저 주소 + 실시간 예보 일강우 시퀀스
 Output: 침수 확률 P(flood)
 
 Swagger UI : /docs    ·    ReDoc : /redoc    ·    OpenAPI JSON : /openapi.json
-Deps (requirements.txt): fastapi, scikit-learn, numpy, scipy  (NO pandas / NO torch)
+Deps (requirements.txt): fastapi, numpy  ONLY  (NO scikit-learn / scipy / pandas / torch)
+-> the sklearn model is exported to build/model_np.json and run by flood_model.py.
 """
 import os
+import sys
 import json
-import pickle
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 ART = os.path.join(ROOT, "build")
+sys.path.insert(0, HERE)          # bundle flood_model.py alongside this file
+import flood_model as fm
 
-with open(os.path.join(ART, "model.pkl"), "rb") as f:
-    BUNDLE = pickle.load(f)
-MODEL, FEATURES = BUNDLE["model"], BUNDLE["features"]
+MODEL = fm.load(os.path.join(ART, "model_np.json"))
+FEATURES = MODEL["features"]
 with open(os.path.join(ART, "serve_tables.json"), encoding="utf-8") as f:
     TABLES = json.load(f)            # adm_cd(str) -> dong static/history snapshot
 LABEL2ADM = {v["dong_label"]: k for k, v in TABLES.items() if v.get("dong_label")}
@@ -125,8 +128,7 @@ def predict(req: PredictRequest):
     info = TABLES[adm]
     feat = rain_windows(req.forecast_daily_rain)
     feat.update({k: info[k] for k in HIST_KEYS})
-    x = np.array([[feat[c] for c in FEATURES]], dtype=float)
-    prob = float(MODEL.predict_proba(x)[:, 1][0])
+    prob = fm.predict_proba(MODEL, feat)
     return {"adm_cd": int(adm), "gu": info["gu"], "dong": info.get("dong_label"),
             "flood_probability": round(prob, 4)}
 

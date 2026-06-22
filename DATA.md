@@ -69,7 +69,7 @@
 |---|---|
 | `samples.parquet` / `.csv` | **메인 학습 패널** (동×날짜 + 피처 + `y`). 14,690행 |
 | `dong_static.parquet` / `.csv` | 동별 정적 속성(정체성·건물구성·지형 스캐폴드). 93행 |
-| `edges.csv` | 동 인접 엣지 리스트(프록시) — GNN용. 238 엣지 |
+| `edges.csv` | 동 인접 엣지 리스트(동일 구 클리크 프록시) — GNN용 |
 | `rain_daily.parquet` | 중간물: 구별 일강우/강도/누적윈도우 |
 
 ---
@@ -158,11 +158,11 @@
 
 **Vercel 무료의 결정적 제약 — 컴퓨트가 아니라 번들 크기:**
 - `torch + torch-geometric` ≈ **800MB+** → Vercel 서버리스 함수 **250MB(unzip) 한도 초과** → 배포 불가.
-- `scikit-learn + numpy` ≈ ~100MB, 추론 수 ms, pickle 모델 수 MB → **무료 티어에 그대로 적재 가능**.
+- 단, `scikit-learn`(scipy ~130MB 포함)도 250MB 초과 → **학습모델을 평문 JSON으로 내보내 numpy로만 서빙**(~65MB). 상세 `INFRA.md §2`, `MODEL.md §2`.
 
 **권장 스택**
 - 모델: **`HistGradientBoostingClassifier`**(또는 LightGBM/XGBoost). 불균형은 `class_weight='balanced'`/`scale_pos_weight`.
 - 검증: **시간 분할**(2023 train → 2024 test)로 누수 없는 일반화 측정. PR-AUC·Recall 중심.
-- 서빙(FastAPI): 기동 시 `model.pkl` + 동별 `hist/이웃/지형` 정적 테이블 로드 → 요청(주소+예보 강우)으로 `rain_*` 계산 → `predict_proba`. CPU 단건 추론 1ms 미만.
+- 서빙(FastAPI): 학습모델을 평문 JSON(`model_np.json`)으로 내보내 **numpy로만 평가**(sklearn/scipy 불필요). 기동 시 모델 + 동별 정적 테이블 로드 → 요청(주소+예보 강우)으로 `rain_*` 계산 → 확률. CPU 단건 추론 수 ms. (배포 상세 `INFRA.md`, 모델 `MODEL.md`)
 
 > GNN 재고 시점: 진짜 법정동 인접 그래프 + 동 정적 피처(지형) + 더 많은 연도가 쌓였을 때. 그때도 **Vercel 무료가 아닌 컨테이너 호스트**(torch 용량)에서 서빙.

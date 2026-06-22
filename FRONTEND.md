@@ -1,24 +1,50 @@
-# FRONTEND.md — Flutter 연동 가이드
+# FRONTEND.md — Flutter 연동 가이드 (API 계약)
 
-서울 침수 위험 예측 API를 Flutter 앱에서 바로 연동하기 위한 문서.
-**기계 판독용 스펙은 [`openapi.json`](openapi.json)** (Swagger). 실행 중 서버의 `/docs`(Swagger UI)·`/redoc`도 동일.
+이 문서는 **클라이언트(Flutter) 개발자를 위한 단일 API 계약서**입니다.
+기계 판독용 스펙은 [`openapi.json`](openapi.json)(Swagger). 실행 중 서버의 `/docs`(Swagger UI)·`/redoc`도 동일.
+
+> 데이터/모델 내부는 알 필요 없습니다. 이 문서의 **엔드포인트 + payload + SDK 정규화 규칙**만 보면 됩니다.
 
 ---
 
-## 1. Base URL & 공통
+## 1. Base URL & 공통 규칙
 
 | 환경 | Base URL |
 |---|---|
 | 로컬 | `http://127.0.0.1:8000` |
 | 프로덕션 | `https://<your-app>.vercel.app` |
 
-- 모든 요청/응답 `application/json`, UTF-8.
-- 인증 없음(공개). CORS 허용(`*`) — 웹/모바일에서 직접 호출 가능.
-- 좌표/주소는 **서울 25개 구의 침수 이력 93개 법정동**만 커버. 그 외 → `404`.
+- 모든 요청/응답 `application/json`, UTF-8. 인증 없음. CORS 허용(`*`) — 모바일/웹 직접 호출 가능.
+- 커버리지 = 서울 25개 구의 **침수 이력 93개 법정동**. 그 외 → `404`.
 
 ---
 
-## 2. 엔드포인트 요약
+## 2. ⭐ SDK 연동 규칙 (입력 정규화 책임 = 클라이언트)
+
+서버 API는 **특정 SDK에 묶이지 않은 정규화된 계약**입니다. 즉 어떤 SDK를 쓰든
+**클라이언트가 SDK 출력을 아래 표준 payload로 변환**해서 보냅니다. (서버는 SDK 원본 JSON을 받지 않음.)
+
+```
+[SDK]                          [클라이언트 변환]                 [서버 payload]
+주소/지오코딩 SDK  ──────▶  법정동코드(adm_cd) 추출   ──────▶  "adm_cd": 1135010600
+(Kakao·VWorld 등)             (좌표→법정동)                     (또는 "address": "...")
+
+날씨 예보 SDK     ──────▶  시간별 강우 → 일강우 합산  ──────▶  "forecast_daily_rain":
+(기상청·OpenWeather)         (과거→오늘 순서, mm)               [5, 40, 60, 100]
+```
+
+**두 가지 변환만 책임지면 됩니다:**
+
+| SDK 출력 | 변환 규칙 | 비고 |
+|---|---|---|
+| 주소/좌표 | → **`adm_cd`(10자리 법정동코드)** 로 보내는 게 가장 안전 | 지오코딩 SDK가 법정동코드를 주면 그대로 사용. 없으면 `address` 문자열 전송(서버 스텁 지오코더는 운영 시 교체 예정) |
+| 시간별/3시간별 강우 | → **일강우(mm) 배열로 합산**, **과거→오늘**(오늘이 마지막) | 누적/선행 강우(3·7·14·30일)는 서버가 이 배열로 계산. 길이 1~30 |
+
+> 즉 "SDK에 맞췄냐"의 답: **API는 SDK 중립이고, 정규화는 클라이언트가 담당**합니다. SDK를 바꿔도 서버는 그대로입니다. (§4-5에 변환 코드 예시.)
+
+---
+
+## 3. 엔드포인트
 
 | 메서드 | 경로 | 용도 |
 |---|---|---|
@@ -31,21 +57,21 @@
 **Request**
 ```json
 {
-  "address": "서울 노원구 중계동 23-28",
+  "adm_cd": 1135010600,
   "forecast_daily_rain": [5, 40, 60, 100],
-  "adm_cd": null
+  "address": ""
 }
 ```
 
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
-| `address` | string | ▲ | 유저 주소. 서버가 법정동으로 지오코딩. `adm_cd`를 주면 생략 가능 |
 | `forecast_daily_rain` | number[] | ✅ | 일강우(mm), **과거→오늘**(오늘이 마지막). 1~30개 |
-| `adm_cd` | int? | ✕ | 10자리 법정동코드. 주면 지오코딩 생략(가장 안정적) |
+| `adm_cd` | int? | ▲ | 10자리 법정동코드. **이걸 보내는 걸 권장**(지오코딩 생략) |
+| `address` | string | ▲ | `adm_cd`가 없을 때 주소로 지오코딩. 둘 중 하나는 필요 |
 
 **Response 200**
 ```json
-{ "adm_cd": 1135010600, "gu": "노원구", "dong": "중계동", "flood_probability": 0.7473 }
+{ "adm_cd": 1135010600, "gu": "노원구", "dong": "중계동", "flood_probability": 0.0765 }
 ```
 
 | 필드 | 타입 | 설명 |
@@ -53,27 +79,26 @@
 | `adm_cd` | int | 법정동코드 |
 | `gu` | string | 구 |
 | `dong` | string? | 동 라벨(null 가능) |
-| `flood_probability` | number | 침수 확률 [0,1] |
+| `flood_probability` | number | 침수 확률 [0,1] — **base-rate 보정된 보수적 값**(§6 참고) |
 
 **에러**
 | status | detail 예 | 처리 권장 |
 |---|---|---|
-| 404 | `dong not resolved …` | 주소 해석 실패 → 동 직접 선택(`/api/dongs`) 유도 |
+| 404 | `dong not resolved …` | 주소 해석 실패 → `/api/dongs`로 동 직접 선택 유도 |
 | 404 | `adm_cd … not in coverage` | 커버리지 밖 안내 |
-| 422 | (pydantic 검증) | 입력값(빈 배열 등) 점검 |
-
-> **권장 패턴**: 앱에서 `/api/dongs`로 동을 고르게 하고 `adm_cd`를 직접 전송하면 지오코더 의존/404를 피함. 주소 자유입력은 보조.
+| 422 | (pydantic) | 입력값(빈 배열 등) 점검 |
 
 ### `GET /api/dongs`
 ```json
 [ { "adm_cd": 1135010500, "gu": "노원구", "dong": "상계동" }, … ]
 ```
+→ 동 선택 드롭다운/자동완성에 사용. 선택값의 `adm_cd`를 `/api/predict`에 전달하면 지오코더 불필요.
 
 ---
 
-## 3. Flutter 예제
+## 4. Flutter 예제
 
-### 3-1. 모델 클래스
+### 4-1. 모델 클래스
 ```dart
 class FloodRisk {
   final int admCd;
@@ -90,7 +115,7 @@ class FloodRisk {
 }
 ```
 
-### 3-2. `http` 패키지
+### 4-2. 예측 호출 (`http`)
 ```dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -98,16 +123,16 @@ import 'package:http/http.dart' as http;
 const baseUrl = 'https://<your-app>.vercel.app';
 
 Future<FloodRisk> predictFlood({
-  String address = '',
   int? admCd,
+  String address = '',
   required List<double> forecastDailyRain,
 }) async {
   final res = await http.post(
     Uri.parse('$baseUrl/api/predict'),
     headers: {'Content-Type': 'application/json'},
     body: jsonEncode({
-      'address': address,
       'adm_cd': admCd,
+      'address': address,
       'forecast_daily_rain': forecastDailyRain,
     }),
   );
@@ -115,55 +140,53 @@ Future<FloodRisk> predictFlood({
     return FloodRisk.fromJson(jsonDecode(utf8.decode(res.bodyBytes)));
   } else if (res.statusCode == 404) {
     throw Exception('커버리지 밖이거나 주소를 해석할 수 없습니다.');
-  } else {
-    throw Exception('예측 실패 (${res.statusCode}): ${utf8.decode(res.bodyBytes)}');
   }
+  throw Exception('예측 실패 (${res.statusCode}): ${utf8.decode(res.bodyBytes)}');
 }
+```
+
+### 4-3. SDK 정규화 어댑터 (§2 규칙의 구현)
+```dart
+// (a) 날씨 SDK의 시간별 강우 -> 일강우 배열(과거->오늘)
+List<double> toDailyRain(List<Map<String, dynamic>> hourly) {
+  final byDay = <String, double>{};
+  for (final h in hourly) {
+    final day = (h['time'] as String).substring(0, 10); // 'YYYY-MM-DD'
+    byDay[day] = (byDay[day] ?? 0) + (h['rain_mm'] as num).toDouble();
+  }
+  final days = byDay.keys.toList()..sort();          // 과거 -> 오늘
+  return [for (final d in days) byDay[d]!];
+}
+
+// (b) 지오코딩 SDK 결과 -> adm_cd (법정동코드). SDK가 b_code/법정동코드를 주면 그대로 사용.
+int admCdFromGeocode(Map<String, dynamic> geo) => int.parse(geo['b_code'] as String);
 
 // 사용
 final risk = await predictFlood(
-  admCd: 1135010600,
-  forecastDailyRain: [5, 40, 60, 100],
+  admCd: admCdFromGeocode(geoResult),
+  forecastDailyRain: toDailyRain(weatherHourly),
 );
 print('${risk.dong} 침수확률 ${(risk.floodProbability * 100).toStringAsFixed(1)}%');
 ```
 
-### 3-3. `dio` 패키지(인터셉터·타임아웃 선호 시)
+### 4-4. 동 목록 (`dio`)
 ```dart
-final dio = Dio(BaseOptions(
-  baseUrl: 'https://<your-app>.vercel.app',
-  connectTimeout: const Duration(seconds: 5),
-  headers: {'Content-Type': 'application/json'},
-));
-
-Future<FloodRisk> predict(int admCd, List<double> rain) async {
-  final r = await dio.post('/api/predict',
-      data: {'adm_cd': admCd, 'forecast_daily_rain': rain});
-  return FloodRisk.fromJson(r.data);
-}
-```
-
-### 3-4. 동 목록 로드(선택 UI)
-```dart
-Future<List<Map<String, dynamic>>> fetchDongs() async {
-  final r = await http.get(Uri.parse('$baseUrl/api/dongs'));
-  return (jsonDecode(utf8.decode(r.bodyBytes)) as List).cast<Map<String, dynamic>>();
-}
+final dio = Dio(BaseOptions(baseUrl: 'https://<your-app>.vercel.app'));
+Future<List<dynamic>> fetchDongs() async => (await dio.get('/api/dongs')).data;
 ```
 
 ---
 
-## 4. OpenAPI 코드 생성(선택)
-타입 안전 클라이언트를 자동 생성하려면 `openapi.json` 사용:
+## 5. OpenAPI 코드 생성(선택)
+타입 안전 클라이언트 자동 생성:
 ```bash
-# openapi-generator
 openapi-generator generate -i openapi.json -g dart-dio -o lib/api
-# 또는 swagger_parser / openapi_generator(dart pub) 사용
+# 또는 dart pub의 swagger_parser / openapi_generator 사용
 ```
 
 ---
 
-## 5. UX 가이드
-- `flood_probability`는 **상대 위험도**(보정했으나 2년치 학습이라 절대값은 보수적). 임계값 색상 예: `<0.2` 안전 / `0.2–0.5` 주의 / `>0.5` 경고.
-- `forecast_daily_rain`은 기상청 단기예보(향후 3일 일강우)를 과거 누적과 이어 붙여 보내면 정확도↑(서버가 3/7/14/30일 누적을 계산).
-- 동 미커버(404) 시: "이 지역은 아직 예측 대상이 아닙니다" + 인접 커버 동 안내.
+## 6. UX 가이드
+- `flood_probability`는 **base-rate에 보정된 보수적 확률**(폭우라도 해당 동 실제 침수빈도 수준). **절대값보다 상대 위험/임계값**으로 표현 권장. 예: `<0.05` 안전 / `0.05–0.15` 주의 / `>0.15` 경고 (운영 데이터로 임계값 재튜닝).
+- `forecast_daily_rain`은 예보(향후 며칠)를 **과거 실측 강우와 이어 붙여** 보내면 누적(3·7·14·30일) 정확도↑.
+- 동 미커버(404): "이 지역은 아직 예측 대상이 아닙니다" + 인접 커버 동 안내.

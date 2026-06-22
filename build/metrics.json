@@ -16,15 +16,11 @@
     "r_at_20": 0.136,
     "r_at_50": 0.262
   },
-  "test_uncalibrated": {
-    "n": 7122,
-    "pos": 61,
-    "pr_auc": 0.0864,
-    "roc_auc": 0.8997,
-    "r_at_20": 0.049,
-    "r_at_50": 0.115
+  "test_deployed_numpy": {
+    "pr_auc": 0.0744,
+    "roc_auc": 0.8794
   },
-  "test_calibrated": {
+  "test_reference_cv3_calibrated": {
     "n": 7122,
     "pos": 61,
     "pr_auc": 0.109,

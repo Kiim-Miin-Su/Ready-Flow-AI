@@ -12,8 +12,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install serving deps
-        run: pip install -r requirements.txt
+      - name: Install serving deps (+ httpx for TestClient)
+        run: pip install -r requirements.txt httpx
       - name: Import + health check
         run: |
           python - <<'PY'

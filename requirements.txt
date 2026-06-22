@@ -1,6 +1,6 @@
-# Vercel serverless runtime deps (api/index.py) — pandas-free to fit the 250MB bundle.
-# scikit-learn pinned to the version the model.pkl was trained with (unpickle compatibility).
+# Vercel serverless runtime deps (api/index.py + flood_model.py).
+# The sklearn model is exported to build/model_np.json and evaluated in pure numpy,
+# so the bundle needs only fastapi + numpy  ->  ~60MB, well under Vercel's 250MB limit.
+# (NO scikit-learn / scipy / pandas / torch.)
 fastapi==0.115.6
-scikit-learn==1.9.0
 numpy==2.5.0
-scipy==1.18.0
