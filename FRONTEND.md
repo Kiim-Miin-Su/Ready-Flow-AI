@@ -12,7 +12,7 @@
 | 환경     | Base URL                        |
 | -------- | ------------------------------- |
 | 로컬     | `http://127.0.0.1:8000`         |
-| 프로덕션 | `https://<your-app>.vercel.app` |
+| 프로덕션 | `https://ready-flow-ai.vercel.app` |
 
 - 모든 요청/응답 `application/json`, UTF-8. 인증 없음. CORS 허용(`*`) — 모바일/웹 직접 호출 가능.
 - 커버리지 = 서울 25개 구의 **침수 이력 93개 법정동**. 그 외 → `404`.
@@ -140,7 +140,7 @@ class FloodRisk {
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-const baseUrl = 'https://<your-app>.vercel.app';
+const baseUrl = 'https://ready-flow-ai.vercel.app';
 
 Future<FloodRisk> predictFlood({
   int? admCd,
@@ -193,7 +193,7 @@ print('${risk.dong} 침수확률 ${(risk.floodProbability * 100).toStringAsFixed
 ### 4-4. 동 목록 (`dio`)
 
 ```dart
-final dio = Dio(BaseOptions(baseUrl: 'https://<your-app>.vercel.app'));
+final dio = Dio(BaseOptions(baseUrl: 'https://ready-flow-ai.vercel.app'));
 Future<List<dynamic>> fetchDongs() async => (await dio.get('/api/dongs')).data;
 ```
 

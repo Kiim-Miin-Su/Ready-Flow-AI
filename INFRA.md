@@ -65,7 +65,7 @@ git push -u origin main
 1. vercel.com → **Add New… → Project → Import** 해당 GitHub 레포.
 2. Framework Preset = **Other**, Root = 레포 루트(자동).
 3. **Deploy**. 이후 `main` push마다 프로덕션, PR마다 Preview 배포.
-4. 배포 후: `GET https://<app>.vercel.app/api/health` 로 확인.
+4. 배포 후: `GET https://ready-flow-ai.vercel.app/api/health` 로 확인.
 
 > 커밋 필수 파일: `api/index.py`, `api/flood_model.py`, `vercel.json`, `requirements.txt`,
 > `build/model_np.json`, `build/serve_tables.json`.
