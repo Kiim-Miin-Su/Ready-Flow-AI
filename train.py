@@ -67,7 +67,30 @@ NUM_IDX = list(
 CAT_IDX = [len(CONT) + i for i in range(len(CAT))]
 
 
-def make_pipe(**params):
+# rain windows are the first 9 continuous features (see CONT) → enforce a
+# POSITIVE monotonic constraint: P(flood) must be non-decreasing in every rainfall
+# feature (more rain never lowers risk). Fixes the non-monotone / OOD-collapse defect
+# documented in PREDICTION.md. The constraint holds over P(positive class) for binary
+# classification (scikit-learn). gu is one-hot (numeric to the classifier), so passing
+# 0 for those columns avoids the native-categorical limitation (sklearn issue #28898).
+N_RAIN = 9  # rain_day, rain_1d, rain_3d, rain_7d, rain_14d, rain_30d, rain_ante7,
+#             rain_max10, rain_max60  (indices 0..8 of CONT)
+
+
+def monotone_cst(n_gu):
+    """Constraint vector over the TRANSFORMED design matrix:
+    [15 continuous (CONT order)] + [n_gu one-hot columns]."""
+    return [1] * N_RAIN + [0] * (len(CONT) - N_RAIN) + [0] * n_gu
+
+
+def make_pipe(monotonic_cst=None, gu_categories=None, **params):
+    # Pin gu categories so the one-hot width (and thus the transformed feature count)
+    # is CONSTANT across CV folds — required for a fixed-length monotonic_cst vector.
+    ohe = (
+        OneHotEncoder(categories=[gu_categories], handle_unknown="ignore")
+        if gu_categories is not None
+        else OneHotEncoder(handle_unknown="ignore")
+    )
     pre = ColumnTransformer(
         [
             (
@@ -80,7 +103,7 @@ def make_pipe(**params):
                 ),
                 NUM_IDX,
             ),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), CAT_IDX),
+            ("cat", ohe, CAT_IDX),
         ]
     )
     return Pipeline(
@@ -89,7 +112,10 @@ def make_pipe(**params):
             (
                 "clf",
                 HistGradientBoostingClassifier(
-                    random_state=0, early_stopping=False, **params
+                    random_state=0,
+                    early_stopping=False,
+                    monotonic_cst=monotonic_cst,
+                    **params,
                 ),
             ),
         ]
@@ -168,8 +194,12 @@ def main():
     )  # numpy -> positional CT, pandas-free serve
     Xte, yte = te[FEATURES].to_numpy(float), te["y"].values
     cv = StratifiedKFold(5, shuffle=True, random_state=0)
+    GU_CATS = np.unique(Xtr[:, CAT_IDX[0]])  # pin one-hot categories (constant width)
+    n_gu = int(GU_CATS.size)
+    CST = monotone_cst(n_gu)  # positive monotone on the 9 rainfall features
     print(
-        f"train(2023)={len(tr)} pos={ytr.sum()} | test(2024)={len(te)} pos={yte.sum()}"
+        f"train(2023)={len(tr)} pos={ytr.sum()} | test(2024)={len(te)} pos={yte.sum()} "
+        f"| monotone rainfall=+1 ({N_RAIN} feats), n_gu={n_gu}"
     )
 
     # ---- Optuna: maximize mean CV PR-AUC on 2023 ----------------------------
@@ -185,7 +215,7 @@ def main():
             max_leaf_nodes=trial.suggest_int("max_leaf_nodes", 7, 31),
         )
         scores = cross_val_score(
-            make_pipe(**params),
+            make_pipe(monotonic_cst=CST, gu_categories=GU_CATS, **params),
             Xtr,
             ytr,
             cv=cv,
@@ -202,7 +232,7 @@ def main():
     print(f"best params={json.dumps(study.best_params)}")
 
     # ---- refit single base on 2023 -----------------------------------------
-    base = make_pipe(**study.best_params)
+    base = make_pipe(monotonic_cst=CST, gu_categories=GU_CATS, **study.best_params)
     base.fit(Xtr, ytr, clf__sample_weight=bal_weight(ytr))
 
     # isotonic calibration on OUT-OF-FOLD predictions (single base + single calibrator
@@ -220,7 +250,7 @@ def main():
 
     # reference: sklearn's built-in cv=3 calibrated model (kept for comparison only)
     cal = CalibratedClassifierCV(
-        make_pipe(**study.best_params), method="isotonic", cv=3
+        make_pipe(monotonic_cst=CST, gu_categories=GU_CATS, **study.best_params), method="isotonic", cv=3
     )
     cal.fit(Xtr, ytr, sample_weight=bal_weight(ytr))
 
