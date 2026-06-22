@@ -1,0 +1,7 @@
+adm_cd,gu,dong_label,elev_mean_m,slope_deg,dist_to_river_m,drainage_density,lowland_frac,semibasement_density,source,notes
+# SCHEMA / TEMPLATE — copy filled rows to data/dong_terrain_external.csv. Leave a metric blank if unknown (pipeline imputes).
+# Columns: elev_mean_m=평균고도(m), slope_deg=평균경사(도), dist_to_river_m=최근접 하천거리(m),
+#          drainage_density=배수관망 밀도(km/km^2), lowland_frac=저지대 비율[0-1], semibasement_density=반지하 가구밀도[0-1].
+# 'source' MUST cite the dataset (근거 필수): 국토지리정보원 DEM / 서울 GIS포털 / 행안부 침수위험지구 / 통계청.
+1162010200,관악구,신림동,,,,,,,"국토지리정보원 5m DEM; 통계청 반지하","예시 행: 값은 비워둠(미수집). 2022-08-08 반지하 침수 참사 지역 — 저지대+반지하 밀도 핵심"
+1135010200,노원구,월계동,,,,,,,"국토지리정보원 5m DEM","예시 행: 값 비움"
