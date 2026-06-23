@@ -131,6 +131,22 @@ class FloodWeekForecastResponse(BaseModel):
     detail: str | None = None
 
 
+class AsosMonthlyResponse(BaseModel):
+    year: int
+    month: int
+    stn: str = Field(..., examples=["108"], description="관측소(108=서울)")
+    rain_by_day: dict[str, float] = Field(
+        ..., description="일(1~31) → 일강수량(mm). 관측 없으면 0.0", examples=[{"1": 0.0, "2": 12.5}])
+    source: str = Field("kma_asos")
+
+
+class WarningBulletinResponse(BaseModel):
+    bulletin: str | None = Field(None, description="특보 통보문 전문(t6). 없으면 null")
+    tm_fc: str | None = Field(None, description="발표시각(yyyyMMddHHmm)")
+    has_warning: bool = Field(False, description="발효 통보문 존재 여부")
+    source: str = Field("kma_wrn")
+
+
 # ----------------------------- logic -----------------------------------------
 def geocode_to_admcd(address: str) -> str:
     """STUB geocoder. 운영 시 VWorld/Kakao 주소→법정동코드로 교체."""
@@ -315,6 +331,132 @@ def _fetch_kma_daily_rain(days: int = 7, nx: int = 60, ny: int = 127) -> tuple[l
     return result, f"KMA getVilageFcst base {base_date} {base_time} nx={nx} ny={ny}"
 
 
+def _kma_get(url: str) -> str:
+    """공통 KMA GET — HTTP 오류를 의미 있는 HTTPException 으로 변환."""
+    try:
+        with urllib.request.urlopen(url, timeout=8) as res:
+            return res.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            raise HTTPException(
+                503,
+                "이 KMA 키가 해당 서비스에 활용신청되어 있지 않습니다(403). "
+                "data.go.kr 에서 같은 키로 해당 서비스를 추가 신청하세요.",
+            ) from e
+        raise HTTPException(502, f"KMA request failed: HTTP {e.code}") from e
+    except Exception as e:
+        raise HTTPException(502, f"KMA request failed: {e}") from e
+
+
+def _fetch_asos_monthly(year: int, month: int, stn: str = "108") -> dict[str, float]:
+    """기상청 ASOS 일자료 — 해당 월의 일강수량(mm) 맵. 키는 백엔드 환경변수."""
+    key = _kma_key()
+    if not key:
+        raise HTTPException(503, "KMA_SERVICE_KEY is not configured on the backend")
+
+    last_day = (datetime(year + (month == 12), (month % 12) + 1, 1)
+                - timedelta(days=1)).day
+    # ASOS 일자료는 '전날'까지만 제공한다. 이번 달이면 endDt 를 어제로 제한.
+    yesterday = (datetime.now(timezone(timedelta(hours=9))) - timedelta(days=1)).date()
+    end_day = last_day
+    if (year, month) == (yesterday.year, yesterday.month):
+        end_day = yesterday.day
+    if year > yesterday.year or (year == yesterday.year and month > yesterday.month):
+        return {}  # 미래 달 — 관측 자료 없음
+    start = f"{year:04d}{month:02d}01"
+    end = f"{year:04d}{month:02d}{end_day:02d}"
+    params = {
+        "serviceKey": key if "%" in key else urllib.parse.quote(key, safe=""),
+        "pageNo": "1", "numOfRows": "40", "dataType": "JSON",
+        "dataCd": "ASOS", "dateCd": "DAY",
+        "startDt": start, "endDt": end, "stnIds": stn,
+    }
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    url = ("https://apis.data.go.kr/1360000/AsosDalyInfoService/"
+           f"getWthrDataList?{query}")
+    body = _kma_get(url)
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise HTTPException(502, "KMA ASOS returned a non-JSON response") from e
+
+    header = payload.get("response", {}).get("header", {})
+    code = str(header.get("resultCode", ""))
+    if code == "03":  # NODATA
+        return {}
+    if code and code != "00":
+        raise HTTPException(502, f"KMA ASOS error {code}: {header.get('resultMsg')}")
+
+    items = payload.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    if isinstance(items, dict):
+        items = [items]
+    rain: dict[str, float] = {}
+    for item in items:
+        tm = str(item.get("tm", ""))           # YYYY-MM-DD
+        parts = tm.split("-")
+        if len(parts) != 3:
+            continue
+        try:
+            day = int(parts[2])
+        except ValueError:
+            continue
+        raw = str(item.get("sumRn", "")).strip()
+        try:
+            rain[str(day)] = float(raw) if raw else 0.0
+        except ValueError:
+            rain[str(day)] = 0.0
+    return rain
+
+
+def _fetch_warning_bulletin(stn: str = "109") -> tuple[str | None, str | None]:
+    """현재 발효 중인 기상특보 현황(t6)을 가져온다. (bulletin, tmFc).
+
+    getPwnStatus(특보 현황)는 전국 현재 발효 특보를 t6 한 필드에
+    "o <재해><주의보|경보> : <지역들>" 형식으로 돌려준다. 지역 매칭은
+    클라이언트(parseBulletin)가 수행하므로 stnId 없이 전국 현황을 받는다.
+    (getWthrWrnMsg 는 tmFc 단건 조회 시 대부분 NO_DATA 라 사용하지 않는다.)
+    """
+    key = _kma_key()
+    if not key:
+        raise HTTPException(503, "KMA_SERVICE_KEY is not configured on the backend")
+    enc = key if "%" in key else urllib.parse.quote(key, safe="")
+    base = "https://apis.data.go.kr/1360000/WthrWrnInfoService"
+
+    now = datetime.now(timezone(timedelta(hours=9)))
+    frm = (now - timedelta(days=3)).strftime("%Y%m%d")
+    to = now.strftime("%Y%m%d")
+
+    url = (f"{base}/getPwnStatus?serviceKey={enc}&dataType=JSON"
+           f"&numOfRows=10&pageNo=1&fromTmFc={frm}&toTmFc={to}")
+    body = _kma_get(url)
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise HTTPException(502, "KMA warning status non-JSON") from e
+
+    header = payload.get("response", {}).get("header", {})
+    code = str(header.get("resultCode", ""))
+    if code == "03":  # NO_DATA — 발효 특보 없음
+        return None, None
+    if code and code != "00":
+        raise HTTPException(502, f"KMA warning status error {code}: {header.get('resultMsg')}")
+
+    items = payload.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+    if isinstance(items, dict):
+        items = [items]
+    # 최신 발표(tmFc 큰 것)의 t6 를 사용.
+    best_t6, best_tm = None, None
+    for it in items:
+        tm = str(it.get("tmFc", ""))
+        t6 = str(it.get("t6", "")).strip()
+        if not t6:
+            continue
+        if best_tm is None or tm > best_tm:
+            best_t6, best_tm = t6, tm
+    return best_t6, best_tm
+
+
 # ----------------------------- routes ----------------------------------------
 @app.get("/api/health", response_model=HealthResponse, tags=["meta"],
          summary="헬스체크")
@@ -370,6 +512,34 @@ def flood_week(
         "source": "kma_vilage_fcst",
         "detail": detail,
     }
+
+
+@app.get("/api/weather/asos-monthly", response_model=AsosMonthlyResponse,
+         tags=["weather"], summary="월간 ASOS 일강수량(캘린더 과거 실측)",
+         responses={502: {"model": ErrorResponse, "description": "기상청 호출 실패"},
+                    503: {"model": ErrorResponse, "description": "기상청 키 미설정"}})
+def asos_monthly(
+    year: int = Query(..., ge=2000, le=2100, description="연도"),
+    month: int = Query(..., ge=1, le=12, description="월"),
+    stn: str = Query("108", description="관측소 번호(108=서울)"),
+):
+    """기상청 ASOS 일자료를 서버에서 호출해 일별 강수량(mm)을 돌려준다(웹 CORS 회피)."""
+    rain = _fetch_asos_monthly(year, month, stn)
+    return {"year": year, "month": month, "stn": stn,
+            "rain_by_day": rain, "source": "kma_asos"}
+
+
+@app.get("/api/weather/warning-bulletin", response_model=WarningBulletinResponse,
+         tags=["weather"], summary="기상특보 통보문(알림 탭)",
+         responses={502: {"model": ErrorResponse, "description": "기상청 호출 실패"},
+                    503: {"model": ErrorResponse, "description": "기상청 키 미설정"}})
+def warning_bulletin(
+    stn: str = Query("109", description="특보구역(109=서울지방기상청)"),
+):
+    """기상특보 최신 통보문 전문을 서버에서 호출해 돌려준다(지역 매칭은 클라이언트가 수행)."""
+    bulletin, tm_fc = _fetch_warning_bulletin(stn)
+    return {"bulletin": bulletin, "tm_fc": tm_fc,
+            "has_warning": bool(bulletin), "source": "kma_wrn"}
 
 
 @app.get("/api/dongs", tags=["meta"], summary="커버리지 동 목록",

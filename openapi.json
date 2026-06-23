@@ -176,6 +176,164 @@
         }
       }
     },
+    "/api/weather/asos-monthly": {
+      "get": {
+        "tags": [
+          "weather"
+        ],
+        "summary": "월간 ASOS 일강수량(캘린더 과거 실측)",
+        "description": "기상청 ASOS 일자료를 서버에서 호출해 일별 강수량(mm)을 돌려준다(웹 CORS 회피).",
+        "operationId": "asos_monthly_api_weather_asos_monthly_get",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 2100,
+              "minimum": 2000,
+              "description": "연도",
+              "title": "Year"
+            },
+            "description": "연도"
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 12,
+              "minimum": 1,
+              "description": "월",
+              "title": "Month"
+            },
+            "description": "월"
+          },
+          {
+            "name": "stn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "관측소 번호(108=서울)",
+              "default": "108",
+              "title": "Stn"
+            },
+            "description": "관측소 번호(108=서울)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AsosMonthlyResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "기상청 호출 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "기상청 키 미설정",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/weather/warning-bulletin": {
+      "get": {
+        "tags": [
+          "weather"
+        ],
+        "summary": "기상특보 통보문(알림 탭)",
+        "description": "기상특보 최신 통보문 전문을 서버에서 호출해 돌려준다(지역 매칭은 클라이언트가 수행).",
+        "operationId": "warning_bulletin_api_weather_warning_bulletin_get",
+        "parameters": [
+          {
+            "name": "stn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "특보구역(109=서울지방기상청)",
+              "default": "109",
+              "title": "Stn"
+            },
+            "description": "특보구역(109=서울지방기상청)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarningBulletinResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "기상청 호출 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "기상청 키 미설정",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/dongs": {
       "get": {
         "tags": [
@@ -199,6 +357,53 @@
   },
   "components": {
     "schemas": {
+      "AsosMonthlyResponse": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "month": {
+            "type": "integer",
+            "title": "Month"
+          },
+          "stn": {
+            "type": "string",
+            "title": "Stn",
+            "description": "관측소(108=서울)",
+            "examples": [
+              "108"
+            ]
+          },
+          "rain_by_day": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Rain By Day",
+            "description": "일(1~31) → 일강수량(mm). 관측 없으면 0.0",
+            "examples": [
+              {
+                "1": 0.0,
+                "2": 12.5
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "kma_asos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "year",
+          "month",
+          "stn",
+          "rain_by_day"
+        ],
+        "title": "AsosMonthlyResponse"
+      },
       "ErrorResponse": {
         "properties": {
           "detail": {
@@ -608,6 +813,47 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WarningBulletinResponse": {
+        "properties": {
+          "bulletin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bulletin",
+            "description": "특보 통보문 전문(t6). 없으면 null"
+          },
+          "tm_fc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tm Fc",
+            "description": "발표시각(yyyyMMddHHmm)"
+          },
+          "has_warning": {
+            "type": "boolean",
+            "title": "Has Warning",
+            "description": "발효 통보문 존재 여부",
+            "default": false
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "kma_wrn"
+          }
+        },
+        "type": "object",
+        "title": "WarningBulletinResponse"
       }
     }
   }
