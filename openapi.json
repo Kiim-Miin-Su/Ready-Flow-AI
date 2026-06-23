@@ -75,6 +75,107 @@
         }
       }
     },
+    "/api/forecast/flood-week": {
+      "get": {
+        "tags": [
+          "forecast"
+        ],
+        "summary": "향후 7일 침수 확률 예보",
+        "description": "기상청 단기예보를 서버에서 호출해 일별 강수량으로 합산하고 침수 확률을 계산한다.",
+        "operationId": "flood_week_api_forecast_flood_week_get",
+        "parameters": [
+          {
+            "name": "adm_cd",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "10자리 법정동코드",
+              "title": "Adm Cd"
+            },
+            "description": "10자리 법정동코드"
+          },
+          {
+            "name": "building_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "residential",
+                    "commercial",
+                    "industrial",
+                    "underground",
+                    "road",
+                    "etc"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "예약 필드. 현재 모델 미사용.",
+              "title": "Building Type"
+            },
+            "description": "예약 필드. 현재 모델 미사용."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FloodWeekForecastResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "커버리지 밖",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "기상청 호출 실패",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "기상청 키 미설정",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/dongs": {
       "get": {
         "tags": [
@@ -110,6 +211,155 @@
           "detail"
         ],
         "title": "ErrorResponse"
+      },
+      "FloodForecastDay": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "title": "Date",
+            "examples": [
+              "2026-06-24"
+            ]
+          },
+          "rain_mm": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Rain Mm",
+            "description": "해당일 예보 강수량 합계(mm)",
+            "examples": [
+              42.5
+            ]
+          },
+          "flood_probability": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Flood Probability",
+            "examples": [
+              0.0765
+            ]
+          },
+          "risk_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "warning",
+                  "danger"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Level",
+            "examples": [
+              "warning"
+            ]
+          },
+          "risk_percentile": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk Percentile",
+            "examples": [
+              88
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "date",
+          "rain_mm",
+          "flood_probability"
+        ],
+        "title": "FloodForecastDay"
+      },
+      "FloodWeekForecastResponse": {
+        "properties": {
+          "adm_cd": {
+            "type": "integer",
+            "title": "Adm Cd"
+          },
+          "gu": {
+            "type": "string",
+            "title": "Gu"
+          },
+          "dong": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dong"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/FloodForecastDay"
+            },
+            "type": "array",
+            "title": "Days"
+          },
+          "peak": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FloodForecastDay"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "kma_vilage_fcst"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "adm_cd",
+          "gu",
+          "dong",
+          "days",
+          "peak"
+        ],
+        "title": "FloodWeekForecastResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
       },
       "HealthResponse": {
         "properties": {
@@ -325,6 +575,39 @@
           "flood_probability"
         ],
         "title": "PredictResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
       }
     }
   }

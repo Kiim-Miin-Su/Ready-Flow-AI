@@ -11,9 +11,13 @@ Deps (requirements.txt): fastapi, numpy  ONLY  (NO scikit-learn / scipy / pandas
 import os
 import sys
 import json
+import re
+import urllib.parse
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -109,6 +113,24 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class FloodForecastDay(BaseModel):
+    date: str = Field(..., examples=["2026-06-24"])
+    rain_mm: float = Field(..., ge=0, examples=[42.5], description="해당일 예보 강수량 합계(mm)")
+    flood_probability: float = Field(..., ge=0, le=1, examples=[0.0765])
+    risk_level: RiskLevel | None = Field(None, examples=["warning"])
+    risk_percentile: int | None = Field(None, ge=0, le=100, examples=[88])
+
+
+class FloodWeekForecastResponse(BaseModel):
+    adm_cd: int
+    gu: str
+    dong: str | None
+    days: list[FloodForecastDay]
+    peak: FloodForecastDay | None
+    source: str = Field("kma_vilage_fcst")
+    detail: str | None = None
+
+
 # ----------------------------- logic -----------------------------------------
 def geocode_to_admcd(address: str) -> str:
     """STUB geocoder. 운영 시 VWorld/Kakao 주소→법정동코드로 교체."""
@@ -133,6 +155,166 @@ def rain_windows(series: list[float]) -> dict:
     }
 
 
+def _predict_for_adm(adm: str, rain_series: list[float]) -> dict:
+    if adm not in TABLES:
+        raise HTTPException(404, f"adm_cd {adm} not in coverage (93 flood-prone dongs)")
+    info = TABLES[adm]
+    feat = rain_windows(rain_series)
+    feat.update({k: info[k] for k in HIST_KEYS})
+    prob = fm.predict_proba(MODEL, feat)
+    return {
+        "adm_cd": int(adm),
+        "gu": info["gu"],
+        "dong": info.get("dong_label"),
+        "flood_probability": round(prob, 4),
+        "risk_level": fm.risk_level(MODEL, prob),
+        "risk_percentile": fm.risk_percentile(MODEL, prob),
+    }
+
+
+# KMA 동네예보 격자 좌표(nx, ny) — 서울 25개 자치구청 기준(약 5km 격자).
+# adm_cd 앞 5자리 = gu_code 로 매핑한다. 동 단위 정밀 좌표가 없어 자치구 대표
+# 격자를 쓰며, 국지성 호우 시에도 구 단위로는 충분히 구분된다(격자 ≈ 5km).
+GU_GRID: dict[int, tuple[int, int]] = {
+    11110: (60, 127),  # 종로구
+    11140: (60, 127),  # 중구
+    11170: (60, 126),  # 용산구
+    11200: (61, 127),  # 성동구
+    11215: (62, 126),  # 광진구
+    11230: (61, 127),  # 동대문구
+    11260: (62, 128),  # 중랑구
+    11290: (61, 127),  # 성북구
+    11305: (61, 128),  # 강북구
+    11320: (61, 129),  # 도봉구
+    11350: (61, 129),  # 노원구
+    11380: (59, 127),  # 은평구
+    11410: (59, 127),  # 서대문구
+    11440: (59, 127),  # 마포구
+    11470: (58, 126),  # 양천구
+    11500: (58, 126),  # 강서구
+    11530: (58, 125),  # 구로구
+    11545: (59, 124),  # 금천구
+    11560: (58, 126),  # 영등포구
+    11590: (59, 125),  # 동작구
+    11620: (59, 125),  # 관악구
+    11650: (61, 125),  # 서초구
+    11680: (61, 126),  # 강남구
+    11710: (62, 126),  # 송파구
+    11740: (62, 126),  # 강동구
+}
+_SEOUL_CENTER_GRID = (60, 127)  # fallback (종로/중구)
+
+
+def _grid_for_adm(adm: str) -> tuple[int, int]:
+    """법정동코드 → 소속 자치구의 KMA 격자(nx, ny). 미상이면 서울 중심."""
+    info = TABLES.get(adm, {})
+    gu_code = int(info.get("gu_code") or 0)
+    return GU_GRID.get(gu_code, _SEOUL_CENTER_GRID)
+
+
+def _kma_key() -> str:
+    return os.environ.get("KMA_SERVICE_KEY", "").strip()
+
+
+def _forecast_base(now: datetime) -> tuple[str, str]:
+    # KMA village forecast base times. Use a conservative previous slot because
+    # newly announced data can lag the nominal base time.
+    kst = now.astimezone(timezone(timedelta(hours=9))) - timedelta(hours=3)
+    base_hours = [2, 5, 8, 11, 14, 17, 20, 23]
+    hour = max((h for h in base_hours if h <= kst.hour), default=23)
+    if hour == 23 and kst.hour < 2:
+        kst = kst - timedelta(days=1)
+    return kst.strftime("%Y%m%d"), f"{hour:02d}00"
+
+
+def _pcp_mm(value: str) -> float:
+    text = (value or "").strip()
+    if not text or "강수없음" in text:
+        return 0.0
+    if "1mm 미만" in text:
+        return 0.5
+    nums = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", text)]
+    if not nums:
+        return 0.0
+    return max(nums)
+
+
+def _fetch_kma_daily_rain(days: int = 7, nx: int = 60, ny: int = 127) -> tuple[list[dict], str]:
+    key = _kma_key()
+    if not key:
+        raise HTTPException(503, "KMA_SERVICE_KEY is not configured on the backend")
+
+    base_date, base_time = _forecast_base(datetime.now(timezone.utc))
+    params = {
+        "serviceKey": key if "%" in key else urllib.parse.quote(key, safe=""),
+        "pageNo": "1",
+        "numOfRows": "1000",
+        "dataType": "JSON",
+        "base_date": base_date,
+        "base_time": base_time,
+        "nx": str(nx),
+        "ny": str(ny),
+    }
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    url = (
+        "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/"
+        f"getVilageFcst?{query}"
+    )
+
+    try:
+        with urllib.request.urlopen(url, timeout=8) as res:
+            body = res.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code == 403:
+            raise HTTPException(
+                503,
+                "이 KMA 키는 '기상청_단기예보 조회서비스(VilageFcstInfoService_2.0)'에 "
+                "활용신청되어 있지 않습니다. data.go.kr 에서 같은 키로 해당 서비스를 "
+                "추가 신청하면 동작합니다. (기상특보·ASOS와는 별개 신청)",
+            ) from e
+        raise HTTPException(502, f"KMA forecast request failed: HTTP {e.code}") from e
+    except Exception as e:
+        raise HTTPException(502, f"KMA forecast request failed: {e}") from e
+
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as e:
+        raise HTTPException(502, "KMA forecast returned a non-JSON response") from e
+
+    response = payload.get("response", {})
+    header = response.get("header", {})
+    code = str(header.get("resultCode", ""))
+    if code != "00":
+        raise HTTPException(502, f"KMA forecast error {code}: {header.get('resultMsg')}")
+
+    items = response.get("body", {}).get("items", {}).get("item", [])
+    daily: dict[str, float] = {}
+    for item in items:
+        if item.get("category") != "PCP":
+            continue
+        date = str(item.get("fcstDate", ""))
+        if len(date) != 8:
+            continue
+        iso = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+        daily[iso] = daily.get(iso, 0.0) + _pcp_mm(str(item.get("fcstValue", "")))
+
+    # 실제 예보가 있는 날짜만 포함한다(단기예보는 보통 오늘~+3일).
+    # 예보 지평 밖의 날을 0mm로 채우면 '침수확률 0%'로 오해되므로 넣지 않는다.
+    today = datetime.now(timezone(timedelta(hours=9))).date()
+    result = []
+    for iso in sorted(daily):
+        try:
+            d = datetime.strptime(iso, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if d < today:
+            continue
+        result.append({"date": iso, "rain_mm": round(daily[iso], 1)})
+        if len(result) >= days:
+            break
+    return result, f"KMA getVilageFcst base {base_date} {base_time} nx={nx} ny={ny}"
+
+
 # ----------------------------- routes ----------------------------------------
 @app.get("/api/health", response_model=HealthResponse, tags=["meta"],
          summary="헬스체크")
@@ -147,16 +329,47 @@ def health():
 def predict(req: PredictRequest):
     """주소(또는 adm_cd) + 예보 일강우 → 해당 법정동의 침수 확률."""
     adm = str(req.adm_cd) if req.adm_cd is not None else geocode_to_admcd(req.address)
-    if adm not in TABLES:
-        raise HTTPException(404, f"adm_cd {adm} not in coverage (93 flood-prone dongs)")
-    info = TABLES[adm]
-    feat = rain_windows(req.forecast_daily_rain)
-    feat.update({k: info[k] for k in HIST_KEYS})
-    prob = fm.predict_proba(MODEL, feat)
-    return {"adm_cd": int(adm), "gu": info["gu"], "dong": info.get("dong_label"),
-            "flood_probability": round(prob, 4),
-            "risk_level": fm.risk_level(MODEL, prob),
-            "risk_percentile": fm.risk_percentile(MODEL, prob)}
+    return _predict_for_adm(adm, req.forecast_daily_rain)
+
+
+@app.get("/api/forecast/flood-week", response_model=FloodWeekForecastResponse,
+         tags=["forecast"], summary="향후 7일 침수 확률 예보",
+         responses={404: {"model": ErrorResponse, "description": "커버리지 밖"},
+                    502: {"model": ErrorResponse, "description": "기상청 호출 실패"},
+                    503: {"model": ErrorResponse, "description": "기상청 키 미설정"}})
+def flood_week(
+    adm_cd: int = Query(..., description="10자리 법정동코드"),
+    building_type: Optional[BuildingType] = Query(None, description="예약 필드. 현재 모델 미사용."),
+):
+    """기상청 단기예보를 서버에서 호출해 일별 강수량으로 합산하고 침수 확률을 계산한다."""
+    adm = str(adm_cd)
+    base = _predict_for_adm(adm, [0.0])  # validates coverage (404 if 밖)
+    nx, ny = _grid_for_adm(adm)
+    kma_days, detail = _fetch_kma_daily_rain(days=7, nx=nx, ny=ny)
+
+    days = []
+    history: list[float] = []
+    for item in kma_days:
+        history.append(float(item["rain_mm"]))
+        pred = _predict_for_adm(adm, history)
+        days.append({
+            "date": item["date"],
+            "rain_mm": item["rain_mm"],
+            "flood_probability": pred["flood_probability"],
+            "risk_level": pred["risk_level"],
+            "risk_percentile": pred["risk_percentile"],
+        })
+
+    peak = max(days, key=lambda x: (x["flood_probability"], x["rain_mm"])) if days else None
+    return {
+        "adm_cd": int(adm),
+        "gu": base["gu"],
+        "dong": base["dong"],
+        "days": days,
+        "peak": peak,
+        "source": "kma_vilage_fcst",
+        "detail": detail,
+    }
 
 
 @app.get("/api/dongs", tags=["meta"], summary="커버리지 동 목록",
